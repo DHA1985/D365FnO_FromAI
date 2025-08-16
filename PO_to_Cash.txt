@@ -1,0 +1,109 @@
+Ok 👌 mình sẽ giải thích chi tiết **quy trình “Procure-to-Pay (P2P)” / “Purchase Order to Cash Out”** trong **Dynamics 365 Finance & Operations (FnO)** — tức là quy trình từ lúc tạo PO đến khi thanh toán tiền cho Vendor.
+
+Trong FnO, quy trình này gồm **2 phần song song**:
+
+1. **Các bước business process trên menu (người dùng thao tác).**
+2. **Các process ngầm (background updates / table updates).**
+
+---
+
+## 🛠 1. Business Process (FnO Menu)
+
+### (A) Yêu cầu mua hàng (Purchase Requisition)
+
+* **Menu:** Procurement and sourcing > Purchase requisitions > All purchase requisitions
+* Người dùng tạo **Purchase Requisition (PR)** → chọn sản phẩm/dịch vụ → gửi **workflow approval**.
+
+### (B) Chuyển thành Đơn mua (Purchase Order)
+
+* **Menu:** Procurement and sourcing > Purchase orders > All purchase orders
+* PR được duyệt → hệ thống sinh **Purchase Order (PO)**.
+* PO cũng qua **workflow approval** trước khi gửi vendor.
+
+### (C) Xác nhận đơn mua (PO Confirmation)
+
+* **Menu:** Purchase order > Action Pane > Confirm
+* Gửi đơn hàng chính thức cho vendor.
+
+### (D) Nhận hàng (Product Receipt / GRN)
+
+* **Menu:** Procurement and sourcing > Purchase orders > Receive > Product receipt
+* Nhập số lượng thực nhận.
+* Sinh chứng từ **Product receipt (GRN)** → update tồn kho.
+
+### (E) Hóa đơn nhà cung cấp (Vendor Invoice)
+
+* **Menu:** Accounts payable > Invoices > Pending vendor invoices
+* Đối chiếu PO + Product Receipt + Invoice (3-way matching).
+* Nếu hợp lệ → Post invoice.
+
+### (F) Thanh toán cho Vendor (Payment)
+
+* **Menu:** Accounts payable > Payments > Payment journal
+* Tạo **Vendor payment journal** (check, bank transfer…).
+* Post journal → sinh bút toán thanh toán, giảm công nợ.
+
+---
+
+## ⚙️ 2. Background Processes (Ngầm + Bảng update)
+
+### (A) Purchase Requisition
+
+* **PurchReqTable, PurchReqLine** (lưu thông tin PR).
+* Khi approved → sinh **PurchTable, PurchLine** (PO).
+
+### (B) Purchase Order
+
+* **PurchTable, PurchLine** (header & line của PO).
+* Status thay đổi: Created → Approved → Confirmed.
+
+### (C) PO Confirmation
+
+* Sinh bản ghi trong **PurchTable** với trạng thái `Confirmed`.
+* Log trong **WorkflowTrackingTable**.
+
+### (D) Product Receipt (GRN)
+
+* Sinh **InventTrans** (transaction tồn kho).
+* Cập nhật **InventSum** (on-hand inventory).
+* Sinh **VendPackingSlipJour, VendPackingSlipTrans** (document GRN).
+
+### (E) Vendor Invoice
+
+* **VendInvoiceJour, VendInvoiceTrans** (lưu invoice).
+* Đồng thời sinh bút toán GL:
+
+  * Debit Expense/Inventory
+  * Credit Accounts Payable
+* Update **Subledger → General Ledger** qua **SubledgerJournalAccountEntry** và **LedgerTrans**.
+
+### (F) Vendor Payment
+
+* **VendTrans** → giảm công nợ.
+* **CustVendSettlement** → lưu thông tin bù trừ thanh toán (settlement).
+* Bút toán GL:
+
+  * Debit Accounts Payable
+  * Credit Bank
+* Lưu trong **BankTrans, LedgerTrans, SubledgerJournalAccountEntry**.
+
+---
+
+## 🔄 Tóm tắt luồng dữ liệu
+
+1. **PR → PO** → (PurchReqTable → PurchTable/PurchLine).
+2. **PO Confirmed** → PurchTable update status.
+3. **GRN** → InventTrans + VendPackingSlip.
+4. **Invoice** → VendInvoiceJour/Trans + Subledger + Ledger.
+5. **Payment** → VendTrans + CustVendSettlement + BankTrans + LedgerTrans.
+
+---
+
+👉 Như vậy:
+
+* **Trên menu** bạn thấy từ PR → PO → GRN → Invoice → Payment.
+* **Ngầm bên dưới** hệ thống update vào **InventTrans, VendTrans, LedgerTrans, BankTrans…** để đảm bảo tồn kho, công nợ và sổ cái luôn khớp.
+
+---
+
+Bạn có muốn mình làm thêm **sơ đồ flowchart (Process Flow + Table update)** để dễ nhìn toàn bộ từ PR đến Payment không?
